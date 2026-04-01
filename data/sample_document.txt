@@ -1,0 +1,94 @@
+HR-RAG System Architecture Overview
+
+The Hierarchical Recursive RAG (HR-RAG) system is a Worker-Orchestrator pipeline that uses a small model as a semantic filter to maximize the reasoning efficiency of a larger root model.
+
+System Components
+
+1. The Root Model (Orchestrator)
+   - Role: Reasoning, query decomposition, and final synthesis
+   - Model Size: 4B+ parameters (e.g., Qwen3-4B, Llama 3.1-8B)
+   - Key Tasks:
+     * Generate a core_question based on the user prompt
+     * Select the appropriate Persona for the Worker Model
+     * Make the final decision to pull data from the discarded JSON log
+     * Synthesize final answers from Worker-provided context
+
+2. The Worker Model (Distiller & Gater)
+   - Role: High-speed text processing and binary classification
+   - Model Size: 0.5B - 1.5B parameters (e.g., Qwen2.5-0.5B)
+   - Key Tasks:
+     * Distillation: Summarize ~4000 token clusters into ~500 token summaries
+     * Gating: Perform a 1-pass relevance check (YES/NO)
+     * Voting: Perform N iterations of relevance checking
+
+3. Available Personas
+   - TECHNICAL: Software engineering and systems architecture
+   - LEGAL: Contract analysis and regulatory compliance
+   - NARRATIVE: Story analysis and plot structure
+   - MEDICAL: Clinical documentation and healthcare information
+   - FINANCIAL: Financial analysis and reporting
+   - GENERAL: General-purpose content analysis
+
+Processing Pipeline
+
+Phase I: Retrieval & Distillation
+1. RAG engine identifies relevant document clusters using ChromaDB
+2. Root Model assigns appropriate persona based on query analysis
+3. Worker Model processes each cluster using the assigned persona
+
+Phase II: The Gating Mechanism
+1. Worker Model evaluates each summary's relevance to core_question
+2. If Worker returns "YES", summary is added to Root Context
+3. If Worker returns "NO", summary goes to discarded_context.json
+
+Phase III: Probabilistic Scoring
+For handling borderline cases, the system calculates a relevance score:
+S = (sum of YES votes / total iterations) * 100
+
+With 3 iterations and 70% threshold:
+- Score >= 70%: Promote to Root Context
+- Score < 70%: Remain in discarded log
+
+Backtracking Mechanism
+
+When the Root Model has LOW_CONFIDENCE or INSUFFICIENT_CONTEXT:
+1. Load discarded_context.json for the current query
+2. Re-run probabilistic voting on all discarded items
+3. Promote items meeting the threshold back to context
+4. Re-synthesize the answer with expanded context
+
+Technical Implementation
+
+- Language: Python 3.10+
+- Vector Database: ChromaDB (persistent storage)
+- API: LM Studio OpenAI-compatible REST API
+- Configuration: Environment variables via python-dotenv
+- CLI: Click-based command interface
+- Data Models: Pydantic for validation
+
+Configuration Parameters
+
+- CHUNK_SIZE: 4000 characters (input to Worker)
+- SUMMARY_SIZE: 500 tokens (output from Worker)
+- VOTING_ITERATIONS: 3 (for probabilistic scoring)
+- VOTING_THRESHOLD: 0.7 (70% required for promotion)
+
+Discarded Context Schema
+
+Each rejected entry contains:
+- timestamp: ISO-8601 format
+- root_query: Original user prompt
+- rejected_clusters: Array of rejected items with:
+  * cluster_id: Unique identifier
+  * source_pages: Source document reference
+  * persona_used: Persona during distillation
+  * summary: The 500-token distilled text
+  * relevance_score: Float 0.0-1.0
+  * iteration_count: Number of voting iterations
+  * votes_yes/votes_no: Vote counts
+
+Success Criteria
+
+1. Compression Ratio: 80%+ context reduction while maintaining accuracy
+2. Latency: Worker processing fast enough for good UX
+3. Recovery: Root Model successfully backtracks using discarded log

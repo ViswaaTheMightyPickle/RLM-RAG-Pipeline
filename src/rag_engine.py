@@ -6,6 +6,7 @@ from typing import Optional
 
 import chromadb
 from chromadb.config import Settings
+import requests
 
 from src.models import ClusterData
 
@@ -15,17 +16,29 @@ class RAGEngine:
     RAG Engine for document ingestion, chunking, and vector retrieval.
 
     Uses ChromaDB for persistent vector storage and similarity search.
+    Uses LM Studio API for embeddings (OpenAI-compatible).
     """
 
-    def __init__(self, persist_directory: str = "./data/chroma_db"):
+    def __init__(
+        self,
+        persist_directory: str = "./data/chroma_db",
+        lm_studio_base_url: str = "http://localhost:1234/v1",
+        embedding_model_id: str = "text-embedding-nomic-embed-text-v1.5",
+    ):
         """
         Initialize the RAG Engine.
 
         Args:
             persist_directory: Directory for ChromaDB persistence
+            lm_studio_base_url: Base URL for LM Studio API
+            embedding_model_id: Model ID for embeddings (from LM Studio)
         """
         self.persist_directory = Path(persist_directory)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
+        
+        self.lm_studio_base_url = lm_studio_base_url
+        self.embedding_model_id = embedding_model_id
+        self.embeddings_url = f"{lm_studio_base_url}/embeddings"
 
         # Initialize ChromaDB with persistent storage
         self.client = chromadb.PersistentClient(
@@ -38,6 +51,48 @@ class RAGEngine:
             name="document_chunks",
             metadata={"description": "Document chunks for RAG retrieval"},
         )
+
+    def _get_embedding(self, text: str) -> list[float]:
+        """
+        Get embedding vector from LM Studio API.
+
+        Args:
+            text: The text to embed
+
+        Returns:
+            List of floats representing the embedding vector
+        """
+        payload = {
+            "model": self.embedding_model_id,
+            "input": text,
+        }
+        
+        response = requests.post(self.embeddings_url, json=payload, timeout=60)
+        response.raise_for_status()
+        
+        result = response.json()
+        return result["data"][0]["embedding"]
+
+    def _get_embeddings(self, texts: list[str]) -> list[list[float]]:
+        """
+        Get embedding vectors for multiple texts.
+
+        Args:
+            texts: List of texts to embed
+
+        Returns:
+            List of embedding vectors
+        """
+        payload = {
+            "model": self.embedding_model_id,
+            "input": texts,
+        }
+        
+        response = requests.post(self.embeddings_url, json=payload, timeout=120)
+        response.raise_for_status()
+        
+        result = response.json()
+        return [item["embedding"] for item in result["data"]]
 
     def _generate_id(self, content: str, source: str) -> str:
         """Generate a unique ID for a chunk based on content and source."""
@@ -122,8 +177,12 @@ class RAGEngine:
             metadatas.append(chunk_metadata)
 
         if ids:
+            # Get embeddings from LM Studio API
+            embeddings = self._get_embeddings(documents)
+            
             self.collection.upsert(
                 ids=ids,
+                embeddings=embeddings,
                 documents=documents,
                 metadatas=metadatas,
             )
@@ -172,8 +231,11 @@ class RAGEngine:
         Returns:
             List of ClusterData objects
         """
+        # Get embedding for the query
+        query_embedding = self._get_embedding(query)
+        
         query_result = self.collection.query(
-            query_texts=[query],
+            query_embeddings=[query_embedding],
             n_results=n_results,
             where=filter_metadata,
             include=["documents", "metadatas", "distances"],

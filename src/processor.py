@@ -76,9 +76,15 @@ class WorkerProcessor:
             persona, cluster.content, self.summary_size
         )
 
+        # Get persona prompt - handle both Persona enum and string
+        if isinstance(persona, Persona):
+            persona_prompt = PERSONA_PROMPTS[persona]
+        else:
+            persona_prompt = PERSONA_PROMPTS.get(persona, PERSONA_PROMPTS[Persona.GENERAL])
+
         summary = self.client.generate(
             model_id=self.worker_model_id,
-            system_msg=PERSONA_PROMPTS[persona].value,
+            system_msg=persona_prompt,
             user_msg=prompt,
             temperature=0.3,
         )

@@ -24,6 +24,9 @@ def get_config() -> dict:
         ),
         "worker_model_id": os.getenv("WORKER_MODEL_ID", "qwen2.5-0.5b"),
         "root_model_id": os.getenv("ROOT_MODEL_ID", "llama-3.1-8b"),
+        "embedding_model_id": os.getenv(
+            "EMBEDDING_MODEL_ID", "text-embedding-nomic-embed-text-v1.5"
+        ),
         "chunk_size": int(os.getenv("CHUNK_SIZE", "4000")),
         "summary_size": int(os.getenv("SUMMARY_SIZE", "500")),
         "voting_iterations": int(os.getenv("VOTING_ITERATIONS", "3")),
@@ -92,7 +95,11 @@ def ask(query: str, threshold: float, persona: str, retrieve: int, verbose: bool
 
     root_client = LLMClient(config["lm_studio_base_url"])
     worker_client = LLMClient(config["lm_studio_base_url"])
-    rag_engine = RAGEngine(persist_directory=Path(config["data_dir"]) / "chroma_db")
+    rag_engine = RAGEngine(
+        persist_directory=Path(config["data_dir"]) / "chroma_db",
+        lm_studio_base_url=config["lm_studio_base_url"],
+        embedding_model_id=config["embedding_model_id"],
+    )
 
     orchestrator = HR_Orchestrator(
         root_client=root_client,
@@ -208,7 +215,11 @@ def ingest(
         raise click.Abort()
 
     # Initialize RAG engine
-    rag_engine = RAGEngine(persist_directory=Path(config["data_dir"]) / "chroma_db")
+    rag_engine = RAGEngine(
+        persist_directory=Path(config["data_dir"]) / "chroma_db",
+        lm_studio_base_url=config["lm_studio_base_url"],
+        embedding_model_id=config["embedding_model_id"],
+    )
 
     # Ingest the document
     num_chunks = rag_engine.ingest_document(
@@ -245,7 +256,11 @@ def clear(source: str, yes: bool):
         python main.py clear --source "document.txt"  # Clear specific source
     """
     config = get_config()
-    rag_engine = RAGEngine(persist_directory=Path(config["data_dir"]) / "chroma_db")
+    rag_engine = RAGEngine(
+        persist_directory=Path(config["data_dir"]) / "chroma_db",
+        lm_studio_base_url=config["lm_studio_base_url"],
+        embedding_model_id=config["embedding_model_id"],
+    )
 
     stats = rag_engine.get_collection_stats()
 
@@ -272,7 +287,11 @@ def clear(source: str, yes: bool):
 def stats():
     """Show knowledge base statistics."""
     config = get_config()
-    rag_engine = RAGEngine(persist_directory=Path(config["data_dir"]) / "chroma_db")
+    rag_engine = RAGEngine(
+        persist_directory=Path(config["data_dir"]) / "chroma_db",
+        lm_studio_base_url=config["lm_studio_base_url"],
+        embedding_model_id=config["embedding_model_id"],
+    )
 
     stats = rag_engine.get_collection_stats()
 
