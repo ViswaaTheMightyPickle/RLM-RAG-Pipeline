@@ -169,25 +169,22 @@ def ask(query: str, threshold: float, persona: str, retrieve: int, verbose: bool
     "--chunk-overlap",
     default=None,
     type=int,
-    help="Overlap between chunks in characters (default: from .env)",
+    help="Overlap between chunks (default: 200)",
 )
 def ingest(path: str, chunk_size: int, chunk_overlap: int):
-    """Ingest documents from a file or directory into the knowledge base.
+    """Ingest documents into the knowledge base.
 
-    PATH can be a single file or a directory (recursive by default).
+    PATH can be a file or directory (recursive).
 
-    Supported formats:
-      Documents: PDF, EPUB, TXT, TEXT
-      Markdown: MD, MDX, Markdown, MDown, MKD, MKDN
-      Web: HTM, HTML, XHTML
+    Supported: PDF, EPUB, TXT, MD, HTML, and more.
 
-    Include/exclude patterns are configured in .env file.
+    Patterns configured in .env (INCLUDE_PATTERNS/EXCLUDE_PATTERNS).
 
     Examples:
 
         python main.py ingest document.pdf
 
-        python main.py ingest ./docs/  # Ingest entire directory
+        python main.py ingest ./docs/
 
         python main.py ingest ./knowledge --chunk-size 2000
     """
@@ -226,6 +223,7 @@ def ingest(path: str, chunk_size: int, chunk_overlap: int):
                 )
                 raise click.Abort()
 
+            click.echo(f"Processing: {path.name}")
             num_chunks = rag_engine.ingest_file(
                 file_path=path,
                 chunk_size=chunk_size,
@@ -247,6 +245,7 @@ def ingest(path: str, chunk_size: int, chunk_overlap: int):
                 exclude_patterns=config["exclude_patterns"],
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
+                show_progress=True,
             )
 
             click.secho("\n" + "=" * 60, fg="cyan")

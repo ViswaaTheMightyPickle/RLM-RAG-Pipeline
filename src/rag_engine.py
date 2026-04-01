@@ -402,6 +402,7 @@ class RAGEngine:
         exclude_patterns: Optional[list[str]] = None,
         chunk_size: int = 4000,
         chunk_overlap: int = 200,
+        show_progress: bool = True,
     ) -> tuple[int, int, list[str], list[str]]:
         """
         Ingest all supported files from a directory recursively.
@@ -412,6 +413,7 @@ class RAGEngine:
             exclude_patterns: Patterns to exclude (e.g., ["node_modules", "*.min.js"])
             chunk_size: Size of each chunk in characters
             chunk_overlap: Overlap between chunks
+            show_progress: Whether to show progress indicators
 
         Returns:
             Tuple of (total_chunks, files_processed, success_files, failed_files)
@@ -480,8 +482,14 @@ class RAGEngine:
 
                 all_files.append(file_path)
 
-        # Ingest all collected files
-        for file_path in all_files:
+        # Ingest all collected files with progress
+        total_files = len(all_files)
+        for i, file_path in enumerate(all_files, 1):
+            if show_progress:
+                # Show progress: [1/10] filename
+                rel_path = file_path.relative_to(dir_path) if file_path.is_relative_to(dir_path) else file_path
+                print(f"[{i}/{total_files}] Processing: {rel_path}", end="", flush=True)
+            
             try:
                 chunks = self.ingest_file(
                     file_path,
@@ -490,8 +498,16 @@ class RAGEngine:
                 )
                 total_chunks += chunks
                 success_files.append(str(file_path))
+                
+                if show_progress:
+                    print(f" ✓ ({chunks} chunks)")
             except Exception as e:
                 failed_files.append(f"{file_path}: {str(e)}")
+                if show_progress:
+                    print(f" ✗ (Error: {str(e)})")
+
+        if show_progress:
+            print()  # New line after completion
 
         return total_chunks, len(all_files), success_files, failed_files
 
