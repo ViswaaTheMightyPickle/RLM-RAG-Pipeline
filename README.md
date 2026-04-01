@@ -8,6 +8,9 @@ HR-RAG bypasses the limitations of standard vector retrieval by using a **Worker
 
 ## Features
 
+- **Multi-Format Ingestion**: PDF, EPUB, TXT, Markdown (6 extensions), HTML (3 extensions)
+- **Recursive Directory Processing**: Automatically traverse subdirectories
+- **Configurable Filtering**: Include/exclude patterns via `.env` file
 - **Hierarchical Processing**: Worker model distills ~4000 token clusters into ~500 token summaries
 - **Probabilistic Voting**: N-iteration relevance scoring for "grey area" content
 - **Backtracking Recovery**: Root model can "pull" data from discarded context log
@@ -29,37 +32,75 @@ pip install -r requirements.txt
 
 2. Edit `.env` to match your LM Studio setup:
    ```env
+   # LM Studio Configuration
    LM_STUDIO_BASE_URL=http://localhost:1234/v1
-   WORKER_MODEL_ID=qwen2.5-0.5b
-   ROOT_MODEL_ID=llama-3.1-8b
+   WORKER_MODEL_ID=qwen2.5-0.5b-instruct
+   ROOT_MODEL_ID=qwen/qwen3-vl-4b
+   EMBEDDING_MODEL_ID=text-embedding-nomic-embed-text-v1.5
+
+   # RAG Configuration
+   CHUNK_SIZE=4000
+   SUMMARY_SIZE=500
+   VOTING_ITERATIONS=3
+   VOTING_THRESHOLD=0.7
+
+   # Ingestion Configuration
+   INCLUDE_PATTERNS=*.pdf,*.epub,*.txt,*.md,*.html
+   EXCLUDE_PATTERNS=node_modules,.git,__pycache__,venv
    ```
 
 ## Usage
+
+### First-Time Setup
+
+Run the initialization command to verify your setup:
+
+```bash
+python main.py init
+```
+
+This checks:
+- ✓ Environment variables configured
+- ✓ LM Studio connection
+- ✓ Models available
+- ✓ Embedding API working
+- ✓ ChromaDB initialized
 
 ### Start LM Studio
 
 1. Open LM Studio
 2. Load your Worker model (e.g., Qwen2.5-0.5B)
-3. Enable Local Server (click the `<->` icon)
-4. Note: You can swap models during execution, or run two instances on different ports
+3. Load your Root model (e.g., Qwen3-VL-4B)
+4. Enable Local Server (click the `<->` icon)
 
 ### CLI Commands
 
-**Check health:**
+**Initialize and verify setup:**
 ```bash
-python main.py health
+python main.py init
 ```
 
-**Ingest documents:**
+**Ingest documents (single file or directory):**
 ```bash
-python main.py ingest document.txt
-python main.py ingest manual.pdf --source "Product Manual v2.0"
+# Single file
+python main.py ingest document.pdf
+
+# Entire directory (recursive by default)
+python main.py ingest ./docs/
+
+# With custom chunk size
+python main.py ingest ./knowledge --chunk-size 2000
 ```
 
 **Ask questions:**
 ```bash
+# Basic query
 python main.py ask "What is the architecture of the system?"
+
+# With specific persona
 python main.py ask "Explain the gating mechanism" --persona TECHNICAL
+
+# With custom threshold and verbose output
 python main.py ask "What are the legal requirements?" --threshold 0.5 --verbose
 ```
 
@@ -71,9 +112,31 @@ python main.py discarded
 
 **Clear data:**
 ```bash
+# Clear everything (with confirmation)
 python main.py clear
-python main.py clear_discarded
+
+# Clear everything (no confirmation)
+python main.py clear --all
+
+# Clear specific source
+python main.py clear --source "document.pdf"
+
+# Skip confirmation
+python main.py clear --yes
 ```
+
+**Check health:**
+```bash
+python main.py health
+```
+
+## Supported File Formats
+
+| Category | Extensions |
+|----------|------------|
+| Documents | `.pdf`, `.epub`, `.txt`, `.text` |
+| Markdown | `.md`, `.mdx`, `.markdown`, `.mdown`, `.mkd`, `.mkdn` |
+| Web | `.htm`, `.html`, `.xhtml` |
 
 ## Architecture
 

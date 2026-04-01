@@ -9,6 +9,7 @@ from chromadb.config import Settings
 import requests
 
 from src.models import ClusterData
+from src.document_loader import load_document, is_supported_file, get_supported_extensions
 
 
 class RAGEngine:
@@ -348,3 +349,162 @@ class RAGEngine:
             return len(existing["ids"])
 
         return 0
+
+    def ingest_file(
+        self,
+        file_path: Path,
+        source: Optional[str] = None,
+        chunk_size: int = 4000,
+        chunk_overlap: int = 200,
+    ) -> int:
+        """
+        Ingest a single file into the vector store.
+
+        Args:
+            file_path: Path to the file to ingest
+            source: Source identifier (defaults to file path)
+            chunk_size: Size of each chunk in characters
+            chunk_overlap: Overlap between chunks
+
+        Returns:
+            Number of chunks created
+
+        Raises:
+            ValueError: If file format is not supported
+        """
+        file_path = Path(file_path)
+
+        if not is_supported_file(file_path):
+            supported = ", ".join(get_supported_extensions())
+            raise ValueError(
+                f"Unsupported file format: {file_path.suffix}. "
+                f"Supported: {supported}"
+            )
+
+        # Load document content
+        content = load_document(file_path)
+
+        # Use file path as source if not provided
+        if source is None:
+            source = str(file_path)
+
+        return self.ingest_document(
+            text=content,
+            source=source,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+
+    def ingest_directory(
+        self,
+        dir_path: Path,
+        include_patterns: Optional[list[str]] = None,
+        exclude_patterns: Optional[list[str]] = None,
+        chunk_size: int = 4000,
+        chunk_overlap: int = 200,
+    ) -> tuple[int, int, list[str], list[str]]:
+        """
+        Ingest all supported files from a directory recursively.
+
+        Args:
+            dir_path: Path to the directory to ingest
+            include_patterns: Glob patterns for files to include (e.g., ["*.pdf", "*.md"])
+            exclude_patterns: Patterns to exclude (e.g., ["node_modules", "*.min.js"])
+            chunk_size: Size of each chunk in characters
+            chunk_overlap: Overlap between chunks
+
+        Returns:
+            Tuple of (total_chunks, files_processed, success_files, failed_files)
+        """
+        import fnmatch
+
+        dir_path = Path(dir_path)
+
+        if not dir_path.is_dir():
+            raise ValueError(f"Not a directory: {dir_path}")
+
+        # Default include patterns - all supported extensions
+        if include_patterns is None:
+            include_patterns = [f"*.{ext}" for ext in get_supported_extensions()]
+
+        # Default exclude patterns
+        if exclude_patterns is None:
+            exclude_patterns = [
+                "node_modules", ".git", "__pycache__",
+                "*.pyc", "*.pyo", "venv", ".venv"
+            ]
+
+        all_files = []
+        failed_files = []
+        success_files = []
+        total_chunks = 0
+
+        # Recursively collect files
+        for root, dirs, files in dir_path.walk() if hasattr(dir_path, 'walk') else self._walk_directory(dir_path):
+            # Filter out excluded directories
+            dirs[:] = [
+                d for d in dirs
+                if not any(
+                    fnmatch.fnmatch(d, pattern.rstrip('*')) or
+                    fnmatch.fnmatch(str(root / d), f"*{pattern}*")
+                    for pattern in exclude_patterns
+                )
+            ]
+
+            # Process files
+            for file in files:
+                file_path = root / file
+
+                # Check if file matches include patterns
+                include_match = any(
+                    fnmatch.fnmatch(file, pattern)
+                    for pattern in include_patterns
+                )
+
+                if not include_match:
+                    continue
+
+                # Check if file matches exclude patterns
+                exclude_match = any(
+                    fnmatch.fnmatch(file, pattern) or
+                    fnmatch.fnmatch(str(file_path), f"*{pattern}*")
+                    for pattern in exclude_patterns
+                )
+
+                if exclude_match:
+                    continue
+
+                # Check if file is supported
+                if not is_supported_file(file_path):
+                    continue
+
+                all_files.append(file_path)
+
+        # Ingest all collected files
+        for file_path in all_files:
+            try:
+                chunks = self.ingest_file(
+                    file_path,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                )
+                total_chunks += chunks
+                success_files.append(str(file_path))
+            except Exception as e:
+                failed_files.append(f"{file_path}: {str(e)}")
+
+        return total_chunks, len(all_files), success_files, failed_files
+
+    def _walk_directory(self, dir_path: Path):
+        """
+        Generator to walk through directory tree.
+
+        Yields:
+            Tuple of (root_path, directories, files)
+        """
+        dirs = [d for d in dir_path.iterdir() if d.is_dir()]
+        files = [f for f in dir_path.iterdir() if f.is_file()]
+        yield dir_path, [d.name for d in dirs], [f.name for f in files]
+
+        for d in dirs:
+            yield from self._walk_directory(d)

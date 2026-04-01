@@ -18,6 +18,9 @@ load_dotenv()
 
 def get_config() -> dict:
     """Get configuration from environment variables."""
+    include_patterns = os.getenv("INCLUDE_PATTERNS")
+    exclude_patterns = os.getenv("EXCLUDE_PATTERNS")
+
     return {
         "lm_studio_base_url": os.getenv(
             "LM_STUDIO_BASE_URL", "http://localhost:1234/v1"
@@ -32,6 +35,8 @@ def get_config() -> dict:
         "voting_iterations": int(os.getenv("VOTING_ITERATIONS", "3")),
         "voting_threshold": float(os.getenv("VOTING_THRESHOLD", "0.7")),
         "data_dir": os.getenv("DATA_DIR", "./data"),
+        "include_patterns": include_patterns.split(",") if include_patterns else None,
+        "exclude_patterns": exclude_patterns.split(",") if exclude_patterns else None,
     }
 
 
@@ -153,66 +158,48 @@ def ask(query: str, threshold: float, persona: str, retrieve: int, verbose: bool
 
 
 @cli.command()
-@click.argument("file_path", type=click.Path(exists=True))
-@click.option(
-    "--source",
-    default=None,
-    help="Source identifier (defaults to filename)",
-)
+@click.argument("path", type=click.Path(exists=True))
 @click.option(
     "--chunk-size",
     default=None,
     type=int,
-    help="Chunk size in characters",
+    help="Chunk size in characters (default: from .env)",
 )
 @click.option(
     "--chunk-overlap",
-    default=200,
+    default=None,
     type=int,
-    help="Overlap between chunks in characters",
+    help="Overlap between chunks in characters (default: from .env)",
 )
-def ingest(
-    file_path: str,
-    source: str,
-    chunk_size: int,
-    chunk_overlap: int,
-):
-    """Ingest a document into the knowledge base.
+def ingest(path: str, chunk_size: int, chunk_overlap: int):
+    """Ingest documents from a file or directory into the knowledge base.
 
-    FILE_PATH is the path to the text file to ingest.
+    PATH can be a single file or a directory (recursive by default).
+
+    Supported formats:
+      Documents: PDF, EPUB, TXT, TEXT
+      Markdown: MD, MDX, Markdown, MDown, MKD, MKDN
+      Web: HTM, HTML, XHTML
+
+    Include/exclude patterns are configured in .env file.
 
     Examples:
 
-        python main.py ingest document.txt
+        python main.py ingest document.pdf
 
-        python main.py ingest manual.pdf --source "Product Manual v2.0"
+        python main.py ingest ./docs/  # Ingest entire directory
 
-        python main.py ingest report.txt --chunk-size 2000
+        python main.py ingest ./knowledge --chunk-size 2000
     """
     config = get_config()
 
     # Override config with command-line options
     if chunk_size is None:
         chunk_size = config["chunk_size"]
+    if chunk_overlap is None:
+        chunk_overlap = 200
 
-    if source is None:
-        source = Path(file_path).name
-
-    click.echo(f"Ingesting: {file_path}")
-    click.echo(f"Source: {source}")
-    click.echo(f"Chunk size: {chunk_size} characters")
-    click.echo(f"Chunk overlap: {chunk_overlap} characters")
-
-    # Read the file
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except UnicodeDecodeError:
-        click.secho(
-            f"Error: Could not read {file_path}. Please ensure it's a text file.",
-            fg="red",
-        )
-        raise click.Abort()
+    path = Path(path)
 
     # Initialize RAG engine
     rag_engine = RAGEngine(
@@ -221,18 +208,68 @@ def ingest(
         embedding_model_id=config["embedding_model_id"],
     )
 
-    # Ingest the document
-    num_chunks = rag_engine.ingest_document(
-        text=content,
-        source=source,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
+    click.echo(f"Ingesting from: {path}")
+    click.echo(f"Chunk size: {chunk_size} characters")
+    click.echo(f"Chunk overlap: {chunk_overlap} characters")
 
-    click.secho(
-        f"\nSuccessfully ingested '{source}': {num_chunks} chunks created.",
-        fg="green",
-    )
+    try:
+        if path.is_file():
+            # Single file ingestion
+            from src.document_loader import is_supported_file, get_supported_extensions
+
+            if not is_supported_file(path):
+                supported = ", ".join(get_supported_extensions())
+                click.secho(
+                    f"Error: Unsupported file format '{path.suffix}'.\n"
+                    f"Supported formats: {supported}",
+                    fg="red",
+                )
+                raise click.Abort()
+
+            num_chunks = rag_engine.ingest_file(
+                file_path=path,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+            click.secho(
+                f"\nSuccessfully ingested '{path.name}': {num_chunks} chunks created.",
+                fg="green",
+            )
+        else:
+            # Directory ingestion
+            click.echo(f"Scanning directory: {path}")
+            click.echo(f"Include patterns: {', '.join(config['include_patterns'] or ['*'])}")
+            click.echo(f"Exclude patterns: {', '.join(config['exclude_patterns'] or ['none'])}")
+
+            total_chunks, files_found, success_files, failed_files = rag_engine.ingest_directory(
+                dir_path=path,
+                include_patterns=config["include_patterns"],
+                exclude_patterns=config["exclude_patterns"],
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+
+            click.secho("\n" + "=" * 60, fg="cyan")
+            click.secho("Ingestion Summary", fg="cyan", bold=True)
+            click.secho("=" * 60, fg="cyan")
+            click.echo(f"Files found:     {files_found}")
+            click.echo(f"Files processed: {len(success_files)}")
+            click.echo(f"Files failed:    {len(failed_files)}")
+            click.echo(f"Total chunks:    {total_chunks}")
+
+            if failed_files:
+                click.secho("\nFailed files:", fg="red")
+                for failed in failed_files:
+                    click.echo(f"  - {failed}")
+
+            if success_files:
+                click.secho("\nSuccessfully processed:", fg="green")
+                for success in success_files:
+                    click.echo(f"  ✓ {success}")
+
+    except Exception as e:
+        click.secho(f"Error: {str(e)}", fg="red")
+        raise click.Abort()
 
 
 @cli.command()
@@ -242,18 +279,28 @@ def ingest(
     help="Delete only chunks from this source",
 )
 @click.option(
+    "--all",
+    "clear_all",
+    is_flag=True,
+    help="Clear everything (knowledge base + discarded log)",
+)
+@click.option(
     "--yes",
     is_flag=True,
     help="Skip confirmation prompt",
 )
-def clear(source: str, yes: bool):
-    """Clear the knowledge base or a specific source.
+def clear(source: str, clear_all: bool, yes: bool):
+    """Clear the knowledge base and/or discarded context log.
 
     Examples:
 
-        python main.py clear  # Clear everything
+        python main.py clear  # Clear everything with confirmation
+
+        python main.py clear --all  # Clear everything (no confirmation)
 
         python main.py clear --source "document.txt"  # Clear specific source
+
+        python main.py clear --yes  # Skip confirmation
     """
     config = get_config()
     rag_engine = RAGEngine(
@@ -272,6 +319,31 @@ def clear(source: str, yes: bool):
 
         deleted = rag_engine.delete_source(source)
         click.secho(f"Deleted {deleted} chunks from '{source}'.", fg="green")
+    elif clear_all:
+        # Clear knowledge base
+        if stats["total_chunks"] > 0 and not yes:
+            click.confirm(
+                f"Clear knowledge base ({stats['total_chunks']} chunks)?",
+                abort=True,
+            )
+
+        if stats["total_chunks"] > 0:
+            rag_engine.clear_collection()
+            click.secho("Knowledge base cleared.", fg="green")
+        else:
+            click.echo("Knowledge base is already empty.")
+
+        # Clear discarded log
+        from src.processor import WorkerProcessor
+
+        worker_client = LLMClient(config["lm_studio_base_url"])
+        processor = WorkerProcessor(
+            client=worker_client,
+            worker_model_id=config["worker_model_id"],
+            data_dir=config["data_dir"],
+        )
+        processor.clear_discarded_log()
+        click.secho("Discarded context log cleared.", fg="green")
     else:
         if not yes:
             click.confirm(
@@ -300,9 +372,20 @@ def stats():
     click.echo(f"Unique sources: {stats['unique_sources']}")
 
     if stats["sources"]:
-        click.secho("\nSources:", fg="yellow")
+        # Group sources by file extension
+        from collections import defaultdict
+        by_extension = defaultdict(list)
+
         for source in stats["sources"]:
-            click.echo(f"  - {source}")
+            ext = Path(source).suffix.lower() or "(no extension)"
+            by_extension[ext].append(source)
+
+        click.secho("\nSources by type:", fg="yellow")
+        for ext in sorted(by_extension.keys()):
+            sources = by_extension[ext]
+            click.secho(f"\n  {ext.upper()} ({len(sources)} files):", fg="cyan")
+            for source in sorted(sources):
+                click.echo(f"    - {source}")
 
 
 @cli.command()
@@ -357,6 +440,191 @@ def clear_discarded():
 
     processor.clear_discarded_log()
     click.secho("Discarded context log cleared.", fg="green")
+
+
+@cli.command()
+def init():
+    """Initialize and verify the HR-RAG setup.
+
+    This command performs a comprehensive health check:
+    - Verifies LM Studio connection
+    - Validates configured models are available
+    - Checks .env configuration
+    - Tests embedding API
+    - Verifies ChromaDB setup
+
+    Examples:
+
+        python main.py init  # Run full setup verification
+    """
+    config = get_config()
+
+    click.secho("=" * 60, fg="cyan", bold=True)
+    click.secho("HR-RAG Setup Verification", fg="cyan", bold=True)
+    click.secho("=" * 60, fg="cyan")
+
+    all_ok = True
+
+    # 1. Check .env configuration
+    click.secho("\n[1/5] Checking configuration...", fg="yellow", bold=True)
+    missing_vars = []
+    required_vars = [
+        "LM_STUDIO_BASE_URL",
+        "WORKER_MODEL_ID",
+        "ROOT_MODEL_ID",
+        "EMBEDDING_MODEL_ID",
+    ]
+
+    for var in required_vars:
+        if not os.getenv(var):
+            missing_vars.append(var)
+            click.echo(f"  ✗ {var} not set")
+        else:
+            click.echo(f"  ✓ {var}={os.getenv(var)}")
+
+    if missing_vars:
+        click.secho(
+            f"\nMissing required environment variables: {', '.join(missing_vars)}",
+            fg="red",
+        )
+        all_ok = False
+    else:
+        click.secho("  Configuration OK!", fg="green")
+
+    # 2. Check LM Studio connection
+    click.secho("\n[2/5] Checking LM Studio connection...", fg="yellow", bold=True)
+    client = LLMClient(config["lm_studio_base_url"])
+
+    if not client.check_health():
+        click.secho(
+            "  ✗ Cannot connect to LM Studio.\n"
+            "  Please ensure:\n"
+            "    1. LM Studio is running\n"
+            "    2. Local server is enabled (click the <-> icon)",
+            fg="red",
+        )
+        all_ok = False
+    else:
+        click.secho("  ✓ LM Studio is accessible!", fg="green")
+
+    # 3. Check available models
+    click.secho("\n[3/5] Checking configured models...", fg="yellow", bold=True)
+
+    try:
+        import requests
+
+        response = requests.get(
+            f"{config['lm_studio_base_url']}/models", timeout=5
+        )
+        if response.status_code == 200:
+            available_models = [
+                m.get("id", "") for m in response.json().get("data", [])
+            ]
+
+            # Check worker model
+            if config["worker_model_id"] in available_models:
+                click.echo(f"  ✓ Worker model: {config['worker_model_id']}")
+            else:
+                click.secho(
+                    f"  ✗ Worker model not found: {config['worker_model_id']}",
+                    fg="red",
+                )
+                all_ok = False
+
+            # Check root model
+            if config["root_model_id"] in available_models:
+                click.echo(f"  ✓ Root model: {config['root_model_id']}")
+            else:
+                click.secho(
+                    f"  ✗ Root model not found: {config['root_model_id']}",
+                    fg="red",
+                )
+                all_ok = False
+
+            # Check embedding model
+            if config["embedding_model_id"] in available_models:
+                click.echo(f"  ✓ Embedding model: {config['embedding_model_id']}")
+            else:
+                click.secho(
+                    f"  ✗ Embedding model not found: {config['embedding_model_id']}",
+                    fg="red",
+                )
+                all_ok = False
+
+            click.secho(f"\n  Available models ({len(available_models)}):", fg="cyan")
+            for model in available_models:
+                click.echo(f"    - {model}")
+    except Exception as e:
+        click.secho(f"  Error fetching models: {e}", fg="red")
+        all_ok = False
+
+    # 4. Test embedding API
+    click.secho("\n[4/5] Testing embedding API...", fg="yellow", bold=True)
+
+    try:
+        embeddings_url = f"{config['lm_studio_base_url']}/embeddings"
+        test_payload = {
+            "model": config["embedding_model_id"],
+            "input": "Test embedding",
+        }
+        response = requests.post(embeddings_url, json=test_payload, timeout=10)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("data") and len(result["data"]) > 0:
+                embedding_dim = len(result["data"][0].get("embedding", []))
+                click.secho(
+                    f"  ✓ Embedding API working (dimension: {embedding_dim})",
+                    fg="green",
+                )
+            else:
+                click.secho("  ✗ Embedding API returned invalid response", fg="red")
+                all_ok = False
+        else:
+            click.secho(f"  ✗ Embedding API error: {response.status_code}", fg="red")
+            all_ok = False
+    except Exception as e:
+        click.secho(f"  ✗ Embedding API test failed: {e}", fg="red")
+        all_ok = False
+
+    # 5. Check ChromaDB setup
+    click.secho("\n[5/5] Checking ChromaDB setup...", fg="yellow", bold=True)
+
+    try:
+        from src.rag_engine import RAGEngine
+
+        rag_engine = RAGEngine(
+            persist_directory=Path(config["data_dir"]) / "chroma_db",
+            lm_studio_base_url=config["lm_studio_base_url"],
+            embedding_model_id=config["embedding_model_id"],
+        )
+
+        stats = rag_engine.get_collection_stats()
+        click.secho(
+            f"  ✓ ChromaDB initialized (chunks: {stats['total_chunks']})",
+            fg="green",
+        )
+    except Exception as e:
+        click.secho(f"  ✗ ChromaDB error: {e}", fg="red")
+        all_ok = False
+
+    # Final summary
+    click.secho("\n" + "=" * 60, fg="cyan", bold=True)
+
+    if all_ok:
+        click.secho("✓ All checks passed! HR-RAG is ready to use.", fg="green", bold=True)
+        click.secho("=" * 60, fg="cyan")
+        click.echo("\nQuick start:")
+        click.echo("  1. Ingest documents: python main.py ingest <path>")
+        click.echo("  2. Ask questions:    python main.py ask \"<question>\"")
+    else:
+        click.secho(
+            "✗ Some checks failed. Please fix the issues above.",
+            fg="red",
+            bold=True,
+        )
+        click.secho("=" * 60, fg="cyan")
+        raise click.Abort()
 
 
 @cli.command()

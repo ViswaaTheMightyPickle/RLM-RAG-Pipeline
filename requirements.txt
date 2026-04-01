@@ -3,3 +3,9 @@ chromadb>=0.4.22
 pydantic>=2.5.0
 click>=8.1.7
 python-dotenv>=1.0.0
+
+# Document parsing
+pymupdf>=1.23.0
+ebooklib>=0.18
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
