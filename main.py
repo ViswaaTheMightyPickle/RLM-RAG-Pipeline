@@ -1,6 +1,7 @@
 """HR-RAG CLI: Hierarchical Recursive RAG Pipeline Command Line Interface."""
 
 import os
+import requests
 from pathlib import Path
 from dotenv import load_dotenv
 import click
@@ -98,8 +99,11 @@ def ask(query: str, threshold: float, persona: str, retrieve: int, verbose: bool
     # Initialize components
     click.echo("Initializing HR-RAG pipeline...")
 
-    root_client = LLMClient(config["lm_studio_base_url"])
-    worker_client = LLMClient(config["lm_studio_base_url"])
+    # Get timeout from environment (default 300 seconds)
+    timeout = int(os.getenv("LLM_TIMEOUT", "300"))
+
+    root_client = LLMClient(config["lm_studio_base_url"], timeout=timeout)
+    worker_client = LLMClient(config["lm_studio_base_url"], timeout=timeout)
     rag_engine = RAGEngine(
         persist_directory=Path(config["data_dir"]) / "chroma_db",
         lm_studio_base_url=config["lm_studio_base_url"],
@@ -129,9 +133,38 @@ def ask(query: str, threshold: float, persona: str, retrieve: int, verbose: bool
 
     click.echo(f"Processing query: {query}")
     click.echo(f"Retrieving {retrieve} chunks...")
+    click.echo(f"Timeout: {timeout} seconds")
 
     # Execute the pipeline
-    response: RAGResponse = orchestrator.execute(query, n_retrieve=retrieve)
+    try:
+        response: RAGResponse = orchestrator.execute(query, n_retrieve=retrieve)
+    except requests.exceptions.ReadTimeout as e:
+        click.secho(
+            f"\nError: Request timed out after {timeout} seconds.",
+            fg="red",
+            bold=True,
+        )
+        click.echo(
+            "This usually means:\n"
+            "  1. The model is still loading in LM Studio\n"
+            "  2. The model is too slow for your hardware\n"
+            "  3. LM Studio is not responding\n\n"
+            "Try:\n"
+            "  - Ensure LM Studio has the model loaded and ready\n"
+            "  - Increase timeout in .env (LLM_TIMEOUT=600)\n"
+            "  - Use a smaller/faster model"
+        )
+        raise click.Abort()
+    except requests.exceptions.ConnectionError as e:
+        click.secho(
+            "\nError: Lost connection to LM Studio API.",
+            fg="red",
+            bold=True,
+        )
+        click.echo(
+            "Please ensure LM Studio is still running and accessible."
+        )
+        raise click.Abort()
 
     # Display the result
     click.secho("\n" + "=" * 60, fg="cyan")

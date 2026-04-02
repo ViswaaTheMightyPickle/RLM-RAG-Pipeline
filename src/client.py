@@ -7,15 +7,21 @@ from typing import Optional
 class LLMClient:
     """Client for interacting with LM Studio's OpenAI-compatible API."""
 
-    def __init__(self, base_url: str = "http://localhost:1234/v1"):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:1234/v1",
+        timeout: int = 300,
+    ):
         """
         Initialize the LLM client.
 
         Args:
             base_url: The base URL for the LM Studio API (default: localhost:1234)
+            timeout: Request timeout in seconds (default: 300)
         """
         self.base_url = base_url
         self.completions_url = f"{base_url}/chat/completions"
+        self.timeout = timeout
 
     def generate(
         self,
@@ -53,7 +59,7 @@ class LLMClient:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
-        response = requests.post(self.completions_url, json=payload, timeout=120)
+        response = requests.post(self.completions_url, json=payload, timeout=self.timeout)
         response.raise_for_status()
 
         result = response.json()
@@ -87,7 +93,7 @@ class LLMClient:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
-        response = requests.post(self.completions_url, json=payload, timeout=120)
+        response = requests.post(self.completions_url, json=payload, timeout=self.timeout)
         response.raise_for_status()
 
         result = response.json()
